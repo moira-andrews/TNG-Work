@@ -6,6 +6,7 @@ from scipy import stats
 import h5py
 import numpy as np
 from velocity import get
+import os
 
 baseUrl = 'http://www.tng-project.org/api/'
 headers = {"api-key":"47e1054245932c83855ab4b7af6a7df9"}
@@ -29,8 +30,13 @@ def particle_type(matter):
     params = {matter:'Coordinates,Masses'}
 
     sub = get(url)
-    saved_filename = get(url+"/cutout.hdf5")
-
+    
+    saved_filename = "cutout_" + str(id) + ".hdf5"
+    if not os.path.exists(saved_filename):
+        saved_filename = get(url+"/cutout.hdf5")
+    
+    
+    
     with h5py.File(saved_filename,'r') as f:
         # NOTE! If the subhalo is near the edge of the box, you must take the 
         # periodic boundary into account! (we ignore it here)
@@ -42,7 +48,7 @@ def particle_type(matter):
         rr = np.sqrt(dx**2 + dy**2 + dz**2)
         rr *= scale_factor/little_h # ckpc/h -> physical kpc
         
-        mass,bin_edge,num = stats.binned_statistic(rr,masses,statistic='sum',bins=np.linspace(0,30,50))
+        mass,bin_edge,num = stats.binned_statistic(rr,masses,statistic='sum',bins=np.linspace(0,30,1000))
         
         f.close()
         
@@ -54,8 +60,11 @@ def dm_mass():
     params = {'DM':'Coordinates,SubfindHsml'}
 
     sub = get(url)
-    saved_filename = get(url+"/cutout.hdf5")
-
+    saved_filename = "cutout_" + str(id) + ".hdf5"
+    if not os.path.exists(saved_filename):
+        saved_filename = get(url+"/cutout.hdf5")
+        
+        
     with h5py.File(saved_filename,'r') as f:
         # NOTE! If the subhalo is near the edge of the box, you must take the 
         # periodic boundary into account! (we ignore it here)
@@ -68,7 +77,7 @@ def dm_mass():
         rr = np.sqrt(dx**2 + dy**2 + dz**2)
         rr *= scale_factor/little_h # ckpc/h -> physical kpc
 
-        num_dm,bin_edge,x = stats.binned_statistic(rr,num,statistic='sum',bins=np.linspace(0,30,50))
+        num_dm,bin_edge,x = stats.binned_statistic(rr,num,statistic='sum',bins=np.linspace(0,30,1000))
         f.close()
         
         mass_dm_tot = 0.45*10**6
@@ -104,11 +113,14 @@ def find_circ_vel():
 
 
 def star_pos_vel():
-    params = {'stars':'Coordinates,Velocities'}
+    params = {'stars':'Coordinates,Velocities,GFM_StellarFormationTime'}
 
     sub = get(url)
-    saved_filename = get(url+"/cutout.hdf5")
-    
+    saved_filename = "cutout_" + str(id) + ".hdf5"
+    if not os.path.exists(saved_filename):
+        saved_filename = get(url+"/cutout.hdf5")
+        
+        
     with h5py.File(saved_filename,'r') as f:
         # NOTE! If the subhalo is near the edge of the box, you must take the 
         # periodic boundary into account! (we ignore it here)
@@ -122,10 +134,14 @@ def star_pos_vel():
 
         star_masses = f['PartType4']['Masses'][:]*(10**10 / 0.6774)
         
+        formation_time = np.array(f['PartType4']['GFM_StellarFormationTime'])
+        
+        select = np.where(formation_time > 0)[0]
+        
         pos = np.array((dx,dy,dz)).T
         print(np.shape(pos))
         
         vel = np.array((vx,vy,vz)).T
         print(np.shape(vel))
         
-    return(pos,vel,star_masses)
+    return(pos[select,:],vel[select,:],star_masses[select])
