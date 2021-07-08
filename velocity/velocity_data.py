@@ -7,19 +7,20 @@ import h5py
 import numpy as np
 from velocity import get
 import os
+from scipy import interpolate
 
 baseUrl = 'http://www.tng-project.org/api/'
 headers = {"api-key":"47e1054245932c83855ab4b7af6a7df9"}
 
 
-id = 25822
+
 redshift = 2
 scale_factor = 1.0 / (1+redshift)
 little_h = 0.6774
 solar_Z = 0.0127
-url = "http://www.tng-project.org/api/TNG50-1/snapshots/z=" + str(redshift) + "/subhalos/" + str(id)
+url = "http://www.tng-project.org/api/TNG100-1/snapshots/z=" + str(redshift) + "/subhalos/" + str(id)
 
-def particle_type(matter):
+def particle_type(matter,id):
 
     if matter == "gas":
         part_type = 'PartType0'
@@ -31,13 +32,13 @@ def particle_type(matter):
 
     sub = get(url)
     
-    saved_filename = "cutout_" + str(id) + ".hdf5"
-    if not os.path.exists(saved_filename):
-        saved_filename = get(url+"/cutout.hdf5")
+    new_saved_filename = os.path.join('redshift_'+str(redshift)+'_data', 'cutout_'+str(id)+'_redshift_'+str(redshift)+'_rawdata.hdf5')
+    if not os.path.exists(new_saved_filename):
+        new_saved_filename = get(url+"/cutout.hdf5")
     
     
     
-    with h5py.File(saved_filename,'r') as f:
+    with h5py.File(new_saved_filename,'r') as f:
         # NOTE! If the subhalo is near the edge of the box, you must take the 
         # periodic boundary into account! (we ignore it here)
         dx = f[part_type]['Coordinates'][:,0] - sub['pos_x']
@@ -52,17 +53,9 @@ def particle_type(matter):
         
         f.close()
         
-        return mass,bin_edge
+        
 
-
-
-def dm_mass():
     params = {'DM':'Coordinates,SubfindHsml'}
-
-    sub = get(url)
-    saved_filename = "cutout_" + str(id) + ".hdf5"
-    if not os.path.exists(saved_filename):
-        saved_filename = get(url+"/cutout.hdf5")
         
         
     with h5py.File(saved_filename,'r') as f:
@@ -83,17 +76,17 @@ def dm_mass():
         mass_dm_tot = 0.45*10**6
         mass_dm = num_dm*mass_dm_tot
         
-        return mass_dm
+        return mass_dm, mass,bin_edge
 
 
     
     
-def find_circ_vel():
+def find_circ_vel(id):
     g = 'gas'
     stars = 'stars'
 
-    mass_gas,r_gas = particle_type(g)
-    mass_stars,r_stars = particle_type(stars)
+    mass_gas,r_gas = particle_type(g,id)
+    mass_stars,r_stars = particle_type(stars,id)
     mass_dm = dm_mass() 
     
     r = (r_gas[1:]+r_gas[:-1])/2
@@ -112,16 +105,16 @@ def find_circ_vel():
     return r,vel_circ
 
 
-def star_pos_vel():
+def star_pos_vel(id):
     params = {'stars':'Coordinates,Velocities,GFM_StellarFormationTime'}
 
     sub = get(url)
-    saved_filename = "cutout_" + str(id) + ".hdf5"
-    if not os.path.exists(saved_filename):
-        saved_filename = get(url+"/cutout.hdf5")
+    new_saved_filename = os.path.join('redshift_'+str(redshift)+'_data', 'cutout_'+str(id)+'_redshift_'+str(redshift)+'_rawdata.hdf5')
+    if not os.path.exists(new_saved_filename):
+        new_saved_filename = get(url+"/cutout.hdf5")
         
         
-    with h5py.File(saved_filename,'r') as f:
+    with h5py.File(new_saved_filename,'r') as f:
         # NOTE! If the subhalo is near the edge of the box, you must take the 
         # periodic boundary into account! (we ignore it here)
         dx = (f['PartType4']['Coordinates'][:,0] - sub['pos_x'])*scale_factor
@@ -145,3 +138,44 @@ def star_pos_vel():
         print(np.shape(vel))
         
     return(pos[select,:],vel[select,:],star_masses[select])
+
+def rotational_data(id):
+    r,vel_circ = find_circ_vel(id)
+    
+    pos,vel_raw,star_masses = star_pos_vel(id)
+    
+    radius = np.sqrt(pos[:,0]**2 + pos[:,1]**2 + pos[:,2]**2)
+    stars_select = np.where(radius < 30)[0]
+    vel = np.array((vel_raw[stars_select, 0], vel_raw[stars_select, 1], vel_raw[stars_select, 2])).T
+    rad = np.array((pos[stars_select, 0], pos[stars_select, 1], pos[stars_select, 2])).T
+    mass = np.array((star_masses[stars_select],star_masses[stars_select],star_masses[stars_select])).T
+    
+    J_raw = mass*(np.cross(rad,vel))
+    J = np.sum(J_raw,axis=0)
+    J_mag = np.sqrt(np.dot(J,J))
+    n_j = J/J_mag
+    
+    r_2d_sub = np.outer((np.dot(rad,n_j.T)),n_j)
+    r_2d = rad - r_2d_sub
+    r_2d_mag = np.sqrt(r_2d[:,0]*r_2d[:,0]+r_2d[:,1]*r_2d[:,1] + r_2d[:,2]*r_2d[:,2])
+    n_r = np.array((r_2d[:,0]/r_2d_mag,r_2d[:,1]/r_2d_mag,r_2d[:,2]/r_2d_mag)).T
+    
+    n_phi = np.cross(n_j,n_r)
+    
+    v_phi = (vel[:,0]*n_phi[:,0] + vel[:,1]*n_phi[:,1] + vel[:,2]*n_phi[:,2])
+    v_r = (vel[:,0]*n_r[:,0] + vel[:,1]*n_r[:,1] + vel[:,2]*n_r[:,2]) 
+    v_j = np.dot(vel,n_j)
+    
+    v_final = ((vel[:,0]*vel[:,0] + vel[:,1]*vel[:,1] + vel[:,2]*vel[:,2]) - v_r**2 - v_j**2)
+    
+    radius = np.sqrt((rad[:,0]*rad[:,0] + rad[:,1]*rad[:,1] + rad[:,2]*rad[:,2]))
+    
+    f = interpolate.interp1d(r, vel_circ,bounds_error = False,fill_value = 'extrapolate')
+    new_v_circ = f(radius)
+    
+    e_v = v_phi/new_v_circ
+    below = np.where(e_v < 0)[0]
+    mass_below = sum(mass[below])
+    bins = np.linspace(-1.5,1.5,500)
+    
+    return r,vel_circ,e_v,bins,mass_below
